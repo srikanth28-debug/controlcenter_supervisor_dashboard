@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import json
 import logging
 import boto3
@@ -20,7 +23,7 @@ def _cors_headers():
     }
 
 
-def _deprecated_local_response(status_code, payload):
+def respond(status_code, payload):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -65,7 +68,7 @@ def handle_chaneltype_prompts(body):
         # ---------- LIST ----------
         if action == "list":
             if not business_group or not channel_type:
-                return _response(400, {"error": "Both 'businessGroup' and 'channelType' are required"})
+                return respond(400, {"error": "Both 'businessGroup' and 'channelType' are required"})
 
             logger.info("Listing prompts for bg=%s, channel=%s", business_group, channel_type)
 
@@ -94,7 +97,7 @@ def handle_chaneltype_prompts(body):
 
             # No attribute names have '#', but we keep parity with your UI approach:
             clean_items = [{k.replace("#", "_"): v for k, v in item.items()} for item in items]
-            return _response(200, {"results": clean_items})
+            return respond(200, {"results": clean_items})
 
         # ---------- CREATE ----------
         elif action == "create":
@@ -104,10 +107,10 @@ def handle_chaneltype_prompts(body):
 
             # Validate PK/SK
             if not item.get("callflow_name") or not item.get("prompt_id"):
-                return _response(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
+                return respond(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
 
             table.put_item(Item=item)
-            return _response(200, {"message": "Prompt created successfully"})
+            return respond(200, {"message": "Prompt created successfully"})
 
         # ---------- UPDATE ----------
         elif action == "update":
@@ -116,7 +119,7 @@ def handle_chaneltype_prompts(body):
             sk = body.get("prompt_id")
 
             if not pk or not sk:
-                return _response(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
+                return respond(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
 
             # Sanitize input and remove PK/SK from update set
             cleaned = _clean_for_put(body)
@@ -125,7 +128,7 @@ def handle_chaneltype_prompts(body):
             cleaned.pop("prompt_id", None)
 
             if not cleaned:
-                return _response(400, {"error": "No attributes provided for update"})
+                return respond(400, {"error": "No attributes provided for update"})
 
             # Safe placeholders so we never collide with reserved words
             update_parts = []
@@ -147,7 +150,7 @@ def handle_chaneltype_prompts(body):
                 ExpressionAttributeValues=expr_attr_values
             )
 
-            return _response(200, {"message": "Prompt updated successfully"})
+            return respond(200, {"message": "Prompt updated successfully"})
 
         # ---------- DELETE ----------
         elif action == "delete":
@@ -156,37 +159,14 @@ def handle_chaneltype_prompts(body):
             sk = body.get("prompt_id")
 
             if not pk or not sk:
-                return _response(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
+                return respond(400, {"error": "Missing primary keys: 'callflow_name' and 'prompt_id' are required"})
 
             table.delete_item(Key={"callflow_name": pk, "prompt_id": sk})
-            return _response(200, {"message": "Prompt deleted successfully"})
+            return respond(200, {"message": "Prompt deleted successfully"})
 
         else:
-            return _response(400, {"error": f"Unsupported action '{action}'"})
+            return respond(400, {"error": f"Unsupported action '{action}'"})
 
     except Exception as e:
         logger.exception("Error in Lambda")
-        return _response(500, {"error": str(e)})
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-
+        return respond(500, {"error": str(e)})

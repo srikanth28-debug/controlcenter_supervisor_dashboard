@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import json
 import logging
 import boto3
@@ -18,7 +21,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code, payload):
+def respond(status_code, payload):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -78,7 +81,7 @@ def handle_chaneltype_configs(body):
         # -------- LIST --------
         if action == "list":
             if not business_group or channel_type is None:
-                return _response(400, {"error": "Both 'businessGroup' and 'channelType' are required"})
+                return respond(400, {"error": "Both 'businessGroup' and 'channelType' are required"})
 
             # 1) Query by PK only (no FilterExpression on the SK!)
             logger.info("Listing configs for bg=%s, channelType=%s", business_group, channel_type)
@@ -108,7 +111,7 @@ def handle_chaneltype_configs(body):
             filtered = [it for it in items if _is_channel_match(it.get("config_type#channel_type", ""), channel_type)]
 
             logger.info("List returned %d items for bg=%s, channelType=%s", len(filtered), business_group, channel_type)
-            return _response(200, {"results": [_to_ui_item(it) for it in filtered]})
+            return respond(200, {"results": [_to_ui_item(it) for it in filtered]})
 
         # -------- CREATE --------
         elif action == "create":
@@ -118,10 +121,10 @@ def handle_chaneltype_configs(body):
             pk = item.get("business_group_id")
             sk = item.get("config_type#channel_type")
             if not pk or not sk:
-                return _response(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
+                return respond(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
 
             table.put_item(Item=item)
-            return _response(200, {"message": "Configuration created successfully"})
+            return respond(200, {"message": "Configuration created successfully"})
 
         # -------- UPDATE --------
         elif action == "update":
@@ -131,11 +134,11 @@ def handle_chaneltype_configs(body):
             pk = converted.get("business_group_id")
             sk = converted.get("config_type#channel_type")
             if not pk or not sk:
-                return _response(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
+                return respond(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
 
             to_update = {k: v for k, v in converted.items() if k not in ("business_group_id", "config_type#channel_type")}
             if not to_update:
-                return _response(400, {"error": "No attributes provided for update"})
+                return respond(400, {"error": "No attributes provided for update"})
 
             parts, names, values = [], {}, {}
             for i, (k, v) in enumerate(to_update.items()):
@@ -152,7 +155,7 @@ def handle_chaneltype_configs(body):
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
             )
-            return _response(200, {"message": "Configuration updated successfully"})
+            return respond(200, {"message": "Configuration updated successfully"})
 
         # -------- DELETE --------
         elif action == "delete":
@@ -160,37 +163,14 @@ def handle_chaneltype_configs(body):
             sk = body.get("config_type#channel_type") or body.get("config_type_channel_type")
             pk = body.get("business_group_id")
             if not pk or not sk:
-                return _response(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
+                return respond(400, {"error": "Missing primary keys: 'business_group_id' and 'config_type#channel_type' are required"})
 
             table.delete_item(Key={"business_group_id": pk, "config_type#channel_type": sk})
-            return _response(200, {"message": "Configuration deleted successfully"})
+            return respond(200, {"message": "Configuration deleted successfully"})
 
         else:
-            return _response(400, {"error": f"Unsupported action '{action}'"})
+            return respond(400, {"error": f"Unsupported action '{action}'"})
 
     except Exception as e:
         logger.exception("Error processing config request")
-        return _response(500, {"error": str(e)})
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-
+        return respond(500, {"error": str(e)})

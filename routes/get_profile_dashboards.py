@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import boto3
 import os
 import urllib.parse
@@ -23,7 +26,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -38,12 +41,12 @@ def handle_get_profile_dashboard(email):
         
 
         if not email:
-            return _response(400, {"error": "Email not found in token"})
+            return respond(400, {"error": "Email not found in token"})
 
         # 2. Query DB1 for security profile
         res1 = profiletable.get_item(Key={"username": email})
         if "Item" not in res1:
-            return _response(404, {"error": "User not found"})
+            return respond(404, {"error": "User not found"})
 
         securityprofile = res1["Item"]["securityprofile"]
         team = res1["Item"]["team"]
@@ -57,12 +60,12 @@ def handle_get_profile_dashboard(email):
         )
 
         if "Item" not in res2:
-            return _response(404, {"error": "No tab config found"})
+            return respond(404, {"error": "No tab config found"})
 
         tab_list = res2["Item"].get("tabnames", [])
 
         # 4. Return combined result
-        return _response(200, {
+        return respond(200, {
             "email": email,
             "securityProfile": securityprofile,
             "tabs": tab_list
@@ -70,30 +73,7 @@ def handle_get_profile_dashboard(email):
 
     except Exception as e:
         logger.exception("Unhandled error during get")
-        return _response(500, {
+        return respond(500, {
             "error": "InternalServerError",
             "message": str(e)
         })
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-

@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import os
 import json
 import logging
@@ -20,7 +23,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -187,7 +190,7 @@ def handle_post_user_proficiencies_bulk(body: dict):
     """
     users = (body or {}).get("users", [])
     if not isinstance(users, list) or len(users) == 0:
-        return _response(400, {"error": "BadRequest", "message": "Field 'users' (non-empty array) is required."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'users' (non-empty array) is required."})
 
     per_user = [_process_single_user(u) for u in users]
 
@@ -195,31 +198,8 @@ def handle_post_user_proficiencies_bulk(body: dict):
     worst = max(u["status"] for u in per_user) if per_user else 200
     overall_ok = all(u["overallOk"] for u in per_user)
 
-    return _response(200 if overall_ok else worst, {
+    return respond(200 if overall_ok else worst, {
         "instanceId": INSTANCE_ID,
         "count": len(per_user),
         "results": per_user
     })
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-

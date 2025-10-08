@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import boto3
 import os
 import json
@@ -21,7 +24,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -42,10 +45,10 @@ def handle_post_predefined_attributes(body: dict):
 
     # Basic validation
     if not isinstance(name, str) or not name.strip():
-        return _response(400, {"error": "BadRequest", "message": "Field 'name' is required."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'name' is required."})
 
     if raw_values is None:
-        return _response(400, {"error": "BadRequest", "message": "Field 'values' (array of strings) is required."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'values' (array of strings) is required."})
 
     # Normalize to a list of strings (preserve order, preserve duplicates)
     if isinstance(raw_values, str):
@@ -54,10 +57,10 @@ def handle_post_predefined_attributes(body: dict):
         # keep duplicates; only trim whitespace and drop empties
         values = [str(v).strip() for v in raw_values if str(v).strip() != ""]
     else:
-        return _response(400, {"error": "BadRequest", "message": "Field 'values' must be a string or array of strings."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'values' must be a string or array of strings."})
 
     if not values:
-        return _response(400, {"error": "BadRequest", "message": "Field 'values' cannot be empty."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'values' cannot be empty."})
 
     try:
         logger.info(f"Creating predefined attribute '{name}' with {len(values)} value(s) in instance {INSTANCE_ID}")
@@ -68,7 +71,7 @@ def handle_post_predefined_attributes(body: dict):
             Values={"StringList": values}
         )
 
-        return _response(201, {
+        return respond(201, {
             "created": True,
             "name": name.strip(),
             "values": values,
@@ -94,7 +97,7 @@ def handle_post_predefined_attributes(body: dict):
         status = status_map.get(code, 502)
 
         logger.warning(f"Create failed [{code}] {msg} (requestId={req_id})")
-        return _response(status, {
+        return respond(status, {
             "error": code,
             "message": msg,
             "name": name,
@@ -104,27 +107,4 @@ def handle_post_predefined_attributes(body: dict):
 
     except Exception as e:
         logger.exception("Unhandled error during create")
-        return _response(500, {"error": "InternalServerError", "message": str(e)})
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-
+        return respond(500, {"error": "InternalServerError", "message": str(e)})

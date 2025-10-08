@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import boto3
 import os
 import urllib.parse
@@ -22,7 +25,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -47,7 +50,7 @@ def handle_profile_configs(body):
                 }
             )
 
-            return _response(200, {
+            return respond(200, {
             "message": "User created"
             })
 
@@ -60,19 +63,19 @@ def handle_profile_configs(body):
                 }
             )
 
-            return _response(200, {
+            return respond(200, {
             "message": "User updated"
             })
 
         elif action == "delete":
             table.delete_item(Key={"securityprofile": body["securityprofile"], "team": body["team"]})
-            return _response(200, {
+            return respond(200, {
             "message": "User deleted"
             })
 
         elif action == "list":
             res = table.scan()
-            return _response(200, {"users": res["Items"]})
+            return respond(200, {"users": res["Items"]})
 
         elif action == "listTeamsTabs":
             res = table.scan()
@@ -91,37 +94,14 @@ def handle_profile_configs(body):
                             tabs.add(t["S"])
                         else:
                             tabs.add(t)
-            return _response(200, {"teams": list(teams), "tabs": list(tabs)})    
+            return respond(200, {"teams": list(teams), "tabs": list(tabs)})    
 
         else:
-            return _response(200, {"error": "Invalid action"})      
+            return respond(200, {"error": "Invalid action"})      
 
     except Exception as e:
         logger.exception("Unhandled error during get")
-        return _response(500, {
+        return respond(500, {
             "error": "InternalServerError",
             "message": str(e)
         })
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-

@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import os
 import json
 import logging
@@ -20,7 +23,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -131,7 +134,7 @@ def handle_post_user_proficiencies(body: dict):
     username = body.get("username")
 
     if not user_id or not isinstance(user_id, str):
-        return _response(400, {"error": "BadRequest", "message": "Field 'user_id' is required."})
+        return respond(400, {"error": "BadRequest", "message": "Field 'user_id' is required."})
 
     # Normalize per section
     associate_valid, associate_invalid = _norm_items(body.get("associate", []), require_level=True)
@@ -148,7 +151,7 @@ def handle_post_user_proficiencies(body: dict):
     # If nothing to do and nothing invalid, short-circuit
     if results["associate"]["attempted"] == 0 and results["update"]["attempted"] == 0 and results["dissociate"]["attempted"] == 0:
         if not (associate_invalid or update_invalid or dissoc_invalid):
-            return _response(400, {"error": "BadRequest", "message": "Nothing to do. Provide at least one of associate/update/dissociate."})
+            return respond(400, {"error": "BadRequest", "message": "Nothing to do. Provide at least one of associate/update/dissociate."})
 
     # 1) Associate
     if associate_valid:
@@ -185,32 +188,9 @@ def handle_post_user_proficiencies(body: dict):
 
     # Decide top-level status:
     worst_status = max(r["result"]["status"] for r in results.values() if r["result"])
-    return _response(200 if all(r["result"]["ok"] for r in results.values()) else worst_status, {
+    return respond(200 if all(r["result"]["ok"] for r in results.values()) else worst_status, {
         "instanceId": INSTANCE_ID,
         "userId": user_id,
         "username": username,
         "results": results
     })
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-

@@ -1,3 +1,6 @@
+from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.logger import get_logger
+from utils.http import respond, cors_headers
 import boto3
 import json
 import uuid
@@ -22,7 +25,7 @@ def _cors_headers():
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
     }
 
-def _deprecated_local_response(status_code: int, payload: dict):
+def respond(status_code: int, payload: dict):
     return {
         "statusCode": status_code,
         "headers": _cors_headers(),
@@ -58,7 +61,7 @@ def handle_agent_proficiency_profiles(body):
                     "proficiencies": body.get("proficiencies", []),
                 }
             )
-            return _response(200, {
+            return respond(200, {
                 "message": "Profile created successfully",
                 "profile_id": new_id                                    # return ID to caller
             })
@@ -72,13 +75,13 @@ def handle_agent_proficiency_profiles(body):
                     ":p": body.get("proficiencies", [])
                 },
             )
-            return _response(200, {"message": "Profile updated successfully"})
+            return respond(200, {"message": "Profile updated successfully"})
 
         # ---------- ADD PROFICIENCY ----------
         elif action == "addProficiency":
             new_prof = body.get("proficiency")
             if not new_prof:
-                return _response(400, {"error": "Missing proficiency to add"})
+                return respond(400, {"error": "Missing proficiency to add"})
 
             # Fetch current proficiencies
             current = table.get_item(Key={"profile_name": body["profile_name"]}).get("Item", {})
@@ -90,13 +93,13 @@ def handle_agent_proficiency_profiles(body):
                 UpdateExpression="SET proficiencies = :p",
                 ExpressionAttributeValues={":p": list(profs)},
             )
-            return _response(200, {"message": "Proficiency added successfully"})
+            return respond(200, {"message": "Proficiency added successfully"})
 
         # ---------- REMOVE PROFICIENCY ----------
         elif action == "removeProficiency":
             remove_prof = body.get("proficiency")
             if not remove_prof:
-                return _response(400, {"error": "Missing proficiency to remove"})
+                return respond(400, {"error": "Missing proficiency to remove"})
 
             current = table.get_item(Key={"profile_name": body["profile_name"]}).get("Item", {})
             profs = current.get("proficiencies", [])
@@ -108,19 +111,19 @@ def handle_agent_proficiency_profiles(body):
                     UpdateExpression="SET proficiencies = :p",
                     ExpressionAttributeValues={":p": profs},
                 )
-                return _response(200, {"message": "Proficiency removed successfully"})
+                return respond(200, {"message": "Proficiency removed successfully"})
             else:
-                return _response(404, {"error": "Proficiency not found"})
+                return respond(404, {"error": "Proficiency not found"})
 
         # ---------- DELETE ----------
         elif action == "delete":
             table.delete_item(Key={"profile_name": body["profile_name"]})
-            return _response(200, {"message": "Profile deleted successfully"})
+            return respond(200, {"message": "Profile deleted successfully"})
 
         # ---------- LIST ALL ----------
         elif action == "list":
             res = table.scan()
-            return _response(200, {"profiles": res.get("Items", [])})
+            return respond(200, {"profiles": res.get("Items", [])})
 
         # ---------- LIST OPTIONS (for dropdown) ----------
         elif action == "listOptions":
@@ -130,40 +133,17 @@ def handle_agent_proficiency_profiles(body):
                 for i in res.get("Items", [])
                 if i.get("profile_id")
             ]
-            return _response(200, {"options": options})
+            return respond(200, {"options": options})
 
         # ---------- GET BY PROFILE ----------
         elif action == "getByProfile":
             res = table.get_item(Key={"profile_name": body["profile_name"]})
-            return _response(200, {"profile": res.get("Item", {})})
+            return respond(200, {"profile": res.get("Item", {})})
 
         # ---------- INVALID ----------
         else:
-            return _response(400, {"error": "Invalid action"})
+            return respond(400, {"error": "Invalid action"})
 
     except Exception as e:
         logger.exception("Unhandled error during profile proficiency operation")
-        return _response(500, {"error": "InternalServerError", "message": str(e)})
-
-from utils.http import respond as __respond, cors_headers as __cors_headers
-from utils.logger import get_logger as __get_logger
-from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
-
-# Standardize helpers across routes (backwards-compatible)
-try:
-    _response
-except NameError:
-    _response = __respond
-try:
-    _cors_headers
-except NameError:
-    _cors_headers = __cors_headers
-try:
-    DDB
-except NameError:
-    DDB = __DDB
-try:
-    CONNECT
-except NameError:
-    CONNECT = __CONNECT
-
+        return respond(500, {"error": "InternalServerError", "message": str(e)})

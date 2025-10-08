@@ -1,0 +1,80 @@
+import boto3
+import json
+import os
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Connect client
+connect_client = CONNECT
+INSTANCE_ID = "5ad694d7-d5f2-434d-9c35-e6369cbd77e7"
+
+def handle_get_list_connect_agents():
+    """
+    Fetch all Amazon Connect agents and return simplified list
+    """
+    try:
+        logger.info("Fetching agent list from Connect")
+
+        response = connect_client.list_users(
+            InstanceId=INSTANCE_ID,
+            MaxResults=100  # Adjust if needed
+        )
+
+        # Extract agent login & names
+        agents = []
+        for user in response.get("UserSummaryList", []):
+            agents.append({
+                "agent_login": user.get("Username"),
+                "agent_name": (
+                    (user.get("IdentityInfo", {}).get("FirstName", "") + " " +
+                     user.get("IdentityInfo", {}).get("LastName", "")).strip()
+                ),
+                "agent_id": user.get("Id")
+            })
+
+        logger.info(f"Fetched {len(agents)} agents")
+
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+            },
+            "body": json.dumps({"agents": agents})
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching agents: {str(e)}")
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+            },
+            "body": json.dumps({"error": str(e)})
+        }
+
+from utils.http import respond as __respond, cors_headers as __cors_headers
+from utils.logger import get_logger as __get_logger
+from utils.aws_clients import ddb as __DDB, connect as __CONNECT, table as __table
+
+# Standardize helpers across routes (backwards-compatible)
+try:
+    _response
+except NameError:
+    _response = __respond
+try:
+    _cors_headers
+except NameError:
+    _cors_headers = __cors_headers
+try:
+    DDB
+except NameError:
+    DDB = __DDB
+try:
+    CONNECT
+except NameError:
+    CONNECT = __CONNECT
+

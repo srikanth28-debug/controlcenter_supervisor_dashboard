@@ -1,107 +1,118 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.aws_clients import ddb as DDB, table
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
-import boto3
+from utils.http import respond
 import os
-import urllib.parse
-import logging
-import json
-from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
 
-
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# ---------------------------------------------------------------------------
+# Logging & AWS Clients
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
 dynamodb = DDB
-table = dynamodb.Table("teco-profile-permissions-react-table")
 
-def _cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    }
+# ---------------------------------------------------------------------------
+# Environment Variables
+# ---------------------------------------------------------------------------
+PROFILE_PERMISSIONS_TABLE_NAME = os.environ["DDB_TABLE_TECO_PROFILE_PERMISSIONS_REACT_TABLE"]
+profile_permissions_table = dynamodb.Table(PROFILE_PERMISSIONS_TABLE_NAME)
 
-def respond(status_code: int, payload: dict):
-    return {
-        "statusCode": status_code,
-        "headers": _cors_headers(),
-        "body": json.dumps(payload),
-    }
 
-def handle_profile_configs(body):
+# Utility function to normalize display names
+def normalize_display_string(display_str):
+    return ", ".join(
+        name.strip().lower().replace(" ", "_")
+        for name in display_str.split(",")
+        if name.strip()
+    )
+
+# ---------------------------------------------------------------------------
+# Main Handler
+# ---------------------------------------------------------------------------
+def handle_profile_configs(body: dict):
+
+    action = body.get("action")
     securityprofile = body.get("securityprofile")
 
     try:
-        logger.info(f"Get email templates for routingProfile={securityprofile}")
+        logger.info(f"[REQUEST] Action={action}, SecurityProfile={securityprofile}")
+        logger.info(f"[TABLE] Using DynamoDB Table: {PROFILE_PERMISSIONS_TABLE_NAME}")
 
-        # body = json.loads(event.get("body", "{}"))
-        action = body.get("action")
-
+        # ---------- CREATE ----------
         if action == "create":
-            table.put_item(
+            # Example usage inside your logic
+            security_profile_display = body["security_profile_display"]
+            team_display = body["team_display"]
+
+            security_profile = normalize_display_string(security_profile_display)
+            team = normalize_display_string(team_display)
+
+            profile_permissions_table.put_item(
                 Item={
-                    "securityprofile": body["securityprofile"],
-                    "team": body["team"],
-                    "tabnames": body["tabnames"]                   
+                    "security_profile": security_profile,
+                    "team": team,
+                    "tabnames": body["tabnames"],
+                    "security_profile_display": body["security_profile_display"],
+                    "team_display": body["team_display"]
                 }
             )
+            logger.info(f"[CREATE] Created profile config for {securityprofile}")
+            return respond(200, {"message": "User created"})
 
-            return respond(200, {
-            "message": "User created"
-            })
-
+        # ---------- UPDATE ----------
         elif action == "update":
-            table.update_item(
-                Key={"securityprofile": body["securityprofile"], "team": body["team"]},
+            profile_permissions_table.update_item(
+                Key={
+                    "security_profile": body["security_profile"],
+                    "team": body["team"]
+                },
                 UpdateExpression="SET tabnames = :t",
-                ExpressionAttributeValues={
-                    ":t": body["tabnames"]
+                ExpressionAttributeValues={":t": body["tabnames"]}
+            )
+            logger.info(f"[UPDATE] Updated profile config for {securityprofile}")
+            return respond(200, {"message": "User updated"})
+
+        # ---------- DELETE ----------
+        elif action == "delete":
+            profile_permissions_table.delete_item(
+                Key={
+                    "securityprofile": body["securityprofile"],
+                    "team": body["team"]
                 }
             )
+            logger.info(f"[DELETE] Deleted profile config for {securityprofile}")
+            return respond(200, {"message": "User deleted"})
 
-            return respond(200, {
-            "message": "User updated"
-            })
-
-        elif action == "delete":
-            table.delete_item(Key={"securityprofile": body["securityprofile"], "team": body["team"]})
-            return respond(200, {
-            "message": "User deleted"
-            })
-
+        # ---------- LIST ----------
         elif action == "list":
-            res = table.scan()
-            return respond(200, {"users": res["Items"]})
+            res = profile_permissions_table.scan()
+            items = res.get("Items", [])
+            logger.info(f"[LIST] Fetched {len(items)} users")
+            return respond(200, {"users": items})
 
+        # ---------- LIST TEAMS + TABS ----------
         elif action == "listTeamsTabs":
-            res = table.scan()
+            res = profile_permissions_table.scan()
             items = res.get("Items", [])
 
-            # collect unique team names
-            teams = sorted({item["team"] for item in items})
-
-            # flatten all tabnames and unique them
+            teams = sorted({item.get("team") for item in items if item.get("team")})
             tabs = set()
+
             for item in items:
-                if "tabnames" in item:
-                    # each tabnames element is either string or dict {"S": "Name"}
-                    for t in item["tabnames"]:
+                tabnames = item.get("tabnames", [])
+                if isinstance(tabnames, list):
+                    for t in tabnames:
                         if isinstance(t, dict) and "S" in t:
                             tabs.add(t["S"])
                         else:
-                            tabs.add(t)
-            return respond(200, {"teams": list(teams), "tabs": list(tabs)})    
+                            tabs.add(str(t))
 
+            logger.info(f"[LIST-TEAMS-TABS] Teams={len(teams)}, Tabs={len(tabs)}")
+            return respond(200, {"teams": list(teams), "tabs": list(tabs)})
+
+        # ---------- INVALID ----------
         else:
-            return respond(200, {"error": "Invalid action"})      
+            logger.warning(f"[INVALID] Unsupported action: {action}")
+            return respond(400, {"error": f"Unsupported action '{action}'"})
 
     except Exception as e:
-        logger.exception("Unhandled error during get")
-        return respond(500, {
-            "error": "InternalServerError",
-            "message": str(e)
-        })
+        logger.exception("[ERROR] Unhandled exception in handle_profile_configs")
+        return respond(500, {"error": "InternalServerError", "message": str(e)})

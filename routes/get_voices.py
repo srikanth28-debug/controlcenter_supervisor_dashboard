@@ -1,42 +1,50 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
+from utils.http import respond
 import boto3
 import json
-import os
-import logging
+from botocore.exceptions import ClientError
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# ---------------------------------------------------------------------------
+# Logger & Polly client
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
+POLLY = boto3.client("polly")
 
-POLLY = boto3.client('polly')
-
+# ---------------------------------------------------------------------------
+# Helper: List supported voices
+# ---------------------------------------------------------------------------
 def get_supported_voices():
-    
-    response = POLLY.describe_voices()
 
-    return response['Voices']
+    voices = []
+    try:
+        paginator = POLLY.get_paginator("describe_voices")
+        for page in paginator.paginate():
+            voices.extend(page.get("Voices", []))
+    except Exception as e:
+        logger.exception("[ERROR] Failed to retrieve Polly voices")
+        raise
+    return voices
 
+# ---------------------------------------------------------------------------
+# Handler
+# ---------------------------------------------------------------------------
 def handle_get_voices():
-
-    logger.info("Handling get voices request")
     
-    voices = get_supported_voices()
+    logger.info("[REQUEST] Handling get voices request")
 
-    return_object = {
-        'statusCode': 200,
-        'body': json.dumps({"voices": voices}),
-        'headers': {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        }
-    }
+    try:
+        voices = get_supported_voices()
+        logger.info(f"[SUCCESS] Retrieved {len(voices)} voices from Polly")
 
-    logger.info(f"Returning: {return_object}")
+        return respond(200, {"voices": voices})
 
-    return return_object
+    except ClientError as e:
+        err = e.response.get("Error", {})
+        code = err.get("Code", "ClientError")
+        msg = err.get("Message", str(e))
+        logger.warning(f"[AWS ERROR] {code}: {msg}")
+        return respond(502, {"error": code, "message": msg})
 
-    
-
+    except Exception as e:
+        logger.exception("[UNHANDLED ERROR] Fetching voices from Polly")
+        return respond(500, {"error": "InternalServerError", "message": str(e)})

@@ -1,102 +1,114 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.aws_clients import ddb as DDB, table
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
-import boto3
+from utils.http import respond
 import os
-import urllib.parse
-import logging
-import json
-from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
 
-
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# ---------------------------------------------------------------------------
+# Logging & AWS Clients
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
 dynamodb = DDB
-table = dynamodb.Table("teco-user-permission-react-table")
 
-def _cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    }
+# ---------------------------------------------------------------------------
+# Environment Variables
+# ---------------------------------------------------------------------------
+USER_PERMISSION_TABLE_NAME = os.environ["DDB_TABLE_TECO_USER_PERMISSION_REACT_TABLE"]
+user_permission_table = dynamodb.Table(USER_PERMISSION_TABLE_NAME)
 
-def respond(status_code: int, payload: dict):
-    return {
-        "statusCode": status_code,
-        "headers": _cors_headers(),
-        "body": json.dumps(payload),
-    }
+PROFILE_PERMISSIONS_TABLE_NAME = os.environ["DDB_TABLE_TECO_PROFILE_PERMISSIONS_REACT_TABLE"]
+profile_permission_table = dynamodb.Table(PROFILE_PERMISSIONS_TABLE_NAME)
 
-def handle_user_configs(body):
+# ---------------------------------------------------------------------------
+# Main Handler
+# ---------------------------------------------------------------------------
+def handle_user_configs(body: dict):
+
+    action = body.get("action")
     username = body.get("username")
 
+    if not action:
+        logger.warning("[WARN] Missing 'action' in request body")
+        return respond(400, {"error": "Missing 'action' parameter"})
+
     try:
-        logger.info(f"Get email templates for routingProfile={username}")
+        logger.info(f"[REQUEST] action={action}, username={username}")
+        logger.info(f"[TABLE] Using DynamoDB Table: {USER_PERMISSION_TABLE_NAME}")
 
-        # body = json.loads(event.get("body", "{}"))
-        action = body.get("action")
-
+        # ---------- CREATE ----------
         if action == "create":
-            table.put_item(
+            user_permission_table.put_item(
                 Item={
                     "username": body["username"],
                     "team": body["team"],
-                    "securityprofile": body["securityprofile"]
+                    "security_profile": body["security_profile"],
+                    "team_display": body["teamDisplay"],
+                    "security_profile_display": body["securityProfileDisplay"]
                 }
             )
+            logger.info(f"[CREATE] User created: {username}")
+            return respond(200, {"message": "User created successfully"})
 
-            return respond(200, {
-            "message": "User created"
-            })
-
+        # ---------- UPDATE ----------
         elif action == "update":
-            table.update_item(
+            user_permission_table.update_item(
                 Key={"username": body["username"]},
-                UpdateExpression="SET team = :t, securityprofile = :a",
+                UpdateExpression="SET team = :t, security_profile = :s, security_profile_display = :sd, team_display = :td",
                 ExpressionAttributeValues={
                     ":t": body["team"],
-                    ":a": body["securityprofile"]
+                    ":s": body["security_profile"],
+                    ":sd": body["securityProfileDisplay"],
+                    ":td": body["teamDisplay"]
                 }
             )
+            logger.info(f"[UPDATE] User updated: {username}")
+            return respond(200, {"message": "User updated successfully"})
 
-            return respond(200, {
-            "message": "User updated"
-            })
-
+        # ---------- DELETE ----------
         elif action == "delete":
-            table.delete_item(Key={"username": body["username"]})
-            return respond(200, {
-            "message": "User deleted"
-            })
+            user_permission_table.delete_item(Key={"username": body["username"]})
+            logger.info(f"[DELETE] User deleted: {username}")
+            return respond(200, {"message": "User deleted successfully"})
 
+        # ---------- LIST USERS ----------
         elif action == "list":
-            res = table.scan()
-            return respond(200, {"users": res["Items"]})
+            res = user_permission_table.scan()
+            users = res.get("Items", [])
+            logger.info(f"[LIST] Retrieved {len(users)} users")
+            return respond(200, {"users": users})
 
+        # ---------- LIST TEAMS + SECURITY PROFILES ----------
         elif action == "listTeamsProfiles":
-            # Scan the table to discover all unique teams and security profiles
-            res = table.scan()
+            res = profile_permission_table.scan()
             items = res.get("Items", [])
 
-            teams = sorted({item.get("team", "") for item in items if "team" in item})
-            profiles = sorted({item.get("securityprofile", "") for item in items if "securityprofile" in item})
+            teams = {}
+            access_levels = {}
 
-            return respond(200, {
-                "teams": list(teams),
-                "securityprofiles": list(profiles)
-            })    
+            for item in items:
+                # Team
+                team_key = item.get("team")
+                team_display = item.get("team_display")
+                if team_key and team_display:
+                    teams[team_key] = team_display
+                
+                # Access level / Security Profile
+                access_key = item.get("security_profile")
+                access_display = item.get("security_profile_display")
+                if access_key and access_display:
+                    access_levels[access_key] = access_display
 
+            # Convert to desired array of objects
+            teams_list = [{"team": k, "teamDisplay": v} for k, v in teams.items()]
+            access_levels_list = [{"accessLevel": k, "accessLevelDisplay": v} for k, v in access_levels.items()]
+
+            logger.info(f"[LIST-TEAMS-PROFILES] Teams={len(teams_list)}, AccessLevels={len(access_levels_list)}")
+            return respond(200, {"teams": teams_list, "accessLevels": access_levels_list})
+
+        # ---------- INVALID ----------
         else:
-            return respond(200, {"error": "Invalid action"})      
+            logger.warning(f"[INVALID] Unsupported action: {action}")
+            return respond(400, {"error": f"Unsupported action '{action}'"})
 
     except Exception as e:
-        logger.exception("Unhandled error during get")
-        return respond(500, {
-            "error": "InternalServerError",
-            "message": str(e)
-        })
+        logger.exception(f"[ERROR] Exception processing user config for {username}")
+        return respond(500, {"error": "InternalServerError", "message": str(e)})

@@ -1,76 +1,75 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.aws_clients import connect
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
-import boto3
+from utils.http import respond
+from botocore.exceptions import ClientError
 import os
 import json
-import logging
-from botocore.exceptions import ClientError
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# ---------------------------------------------------------------------------
+# Logger and Connect client
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
+CONNECT = connect
 
-# Env vars in Lambda config
-INSTANCE_ID = os.environ["CONNECT_INSTANCE_ID"]   # e.g. "33dd2811-cc53-...."
-REGION      = os.environ.get("CONNECT_REGION", "us-west-2")
+# ---------------------------------------------------------------------------
+# Environment variables
+# ---------------------------------------------------------------------------
+INSTANCE_ID = os.getenv("CONNECT_INSTANCE_ID")   # e.g., "33dd2811-cc53-...."
+REGION = os.getenv("CONNECT_REGION", "us-west-2")
 
-connect = CONNECT
-
-def _cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    }
-
-def respond(status_code: int, payload: dict):
-    return {
-        "statusCode": status_code,
-        "headers": _cors_headers(),
-        "body": json.dumps(payload),
-    }
-
+# ---------------------------------------------------------------------------
+# Handler
+# ---------------------------------------------------------------------------
 def handle_post_predefined_attributes(body: dict):
-    """
-    Expected JSON body:
-      {
-        "name": "Skill",
-        "values": ["Gold", "Silver", "Bronze"]   # or "StringList": [...]
-      }
-    No de-duplication is performed here.
-    """
+
     name = (body or {}).get("name") or (body or {}).get("attributeName")
     raw_values = (body or {}).get("values") or (body or {}).get("StringList")
 
-    # Basic validation
+    # ---------------- Validation ----------------
     if not isinstance(name, str) or not name.strip():
-        return respond(400, {"error": "BadRequest", "message": "Field 'name' is required."})
+        logger.warning("Missing or invalid 'name' in request body.")
+        return respond(400, {
+            "error": "BadRequest",
+            "message": "Field 'name' is required."
+        })
 
     if raw_values is None:
-        return respond(400, {"error": "BadRequest", "message": "Field 'values' (array of strings) is required."})
+        logger.warning("Missing 'values' in request body.")
+        return respond(400, {
+            "error": "BadRequest",
+            "message": "Field 'values' (array of strings) is required."
+        })
 
-    # Normalize to a list of strings (preserve order, preserve duplicates)
+    # Normalize values list
     if isinstance(raw_values, str):
         values = [raw_values.strip()]
     elif isinstance(raw_values, list):
-        # keep duplicates; only trim whitespace and drop empties
-        values = [str(v).strip() for v in raw_values if str(v).strip() != ""]
+        values = [str(v).strip() for v in raw_values if str(v).strip()]
     else:
-        return respond(400, {"error": "BadRequest", "message": "Field 'values' must be a string or array of strings."})
+        logger.warning(f"Invalid type for 'values': {type(raw_values)}")
+        return respond(400, {
+            "error": "BadRequest",
+            "message": "Field 'values' must be a string or array of strings."
+        })
 
     if not values:
-        return respond(400, {"error": "BadRequest", "message": "Field 'values' cannot be empty."})
+        logger.warning("Empty values list after normalization.")
+        return respond(400, {
+            "error": "BadRequest",
+            "message": "Field 'values' cannot be empty."
+        })
 
+    # ---------------- AWS Call ----------------
     try:
-        logger.info(f"Creating predefined attribute '{name}' with {len(values)} value(s) in instance {INSTANCE_ID}")
+        logger.info(f"[CREATE] Creating predefined attribute '{name}' with {len(values)} value(s) in instance {INSTANCE_ID}")
 
-        connect.create_predefined_attribute(
+        CONNECT.create_predefined_attribute(
             InstanceId=INSTANCE_ID,
             Name=name.strip(),
             Values={"StringList": values}
         )
 
+        logger.info(f"[CREATE SUCCESS] Attribute '{name}' created successfully.")
         return respond(201, {
             "created": True,
             "name": name.strip(),
@@ -78,6 +77,7 @@ def handle_post_predefined_attributes(body: dict):
             "message": f"Predefined attribute '{name.strip()}' was created."
         })
 
+    # ---------------- AWS ClientError Handling ----------------
     except ClientError as e:
         err = e.response.get("Error", {})
         code = err.get("Code", "ClientError")
@@ -96,7 +96,7 @@ def handle_post_predefined_attributes(body: dict):
         }
         status = status_map.get(code, 502)
 
-        logger.warning(f"Create failed [{code}] {msg} (requestId={req_id})")
+        logger.warning(f"[CREATE FAILED] [{code}] {msg} (RequestId={req_id})")
         return respond(status, {
             "error": code,
             "message": msg,
@@ -105,6 +105,10 @@ def handle_post_predefined_attributes(body: dict):
             "requestId": req_id
         })
 
+    # ---------------- Generic Exception ----------------
     except Exception as e:
-        logger.exception("Unhandled error during create")
-        return respond(500, {"error": "InternalServerError", "message": str(e)})
+        logger.exception("[CREATE ERROR] Unhandled exception during attribute creation.")
+        return respond(500, {
+            "error": "InternalServerError",
+            "message": str(e)
+        })

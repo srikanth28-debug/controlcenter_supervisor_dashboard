@@ -1,48 +1,30 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
+from utils.aws_clients import table
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
-import boto3
-import os
-import urllib.parse
-import logging
-import json
+from utils.http import respond
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
 from decimal import Decimal
+import os
+import json
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# ---------------------------------------------------------------------------
+# Logger and environment setup
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
 
-# Env vars in Lambda config
-INSTANCE_ID = os.environ["CONNECT_INSTANCE_ID"]
-REGION      = os.environ.get("CONNECT_REGION", "us-west-2")
+# ---------------------------------------------------------------------------
+# DynamoDB table (from env)
+# ---------------------------------------------------------------------------
+EMAIL_TEMPLATES_TABLE = table("DDB_TABLE_TECO_EMAIL_TEMPLATES", "teco_email_templates")
 
-connect = CONNECT
-dynamodb = DDB
-table = dynamodb.Table("teco_email_templates")
-
-def _cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    }
-
-def respond(status_code: int, payload: dict):
-    return {
-        "statusCode": status_code,
-        "headers": _cors_headers(),
-        "body": json.dumps(payload),
-    }
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def _json_safe(obj):
-    """Recursively convert DynamoDB types (set, Decimal) to JSON-serializable ones."""
+    """Recursively convert DynamoDB types (set, Decimal) to JSON-safe primitives."""
     if isinstance(obj, set):
         return sorted(list(obj))
     if isinstance(obj, Decimal):
-        # Convert integral Decimals to int, others to float
         return int(obj) if obj == obj.to_integral_value() else float(obj)
     if isinstance(obj, list):
         return [_json_safe(x) for x in obj]
@@ -50,25 +32,38 @@ def _json_safe(obj):
         return {k: _json_safe(v) for k, v in obj.items()}
     return obj
 
-def handle_get_email_template_app(path_params):
+
+# ---------------------------------------------------------------------------
+# Handler
+# ---------------------------------------------------------------------------
+def handle_get_email_template_app(path_params: dict):
+    """
+    Fetches all email templates from DynamoDB filtered by routing profile.
+    API route example: GET /email-templates/{routingProfile}
+    """
+
     routing_profile_name = path_params.get("routingProfile")
 
-    try:
-        logger.info(f"Get email templates for routingProfile={routing_profile_name}")
+    if not routing_profile_name:
+        logger.warning("Missing 'routingProfile' path parameter")
+        return respond(400, {"error": "BadRequest", "message": "'routingProfile' is required"})
 
-        response = table.scan(
+    try:
+        logger.info(f"[GET] Fetching email templates for routingProfile={routing_profile_name}")
+
+        response = EMAIL_TEMPLATES_TABLE.scan(
             FilterExpression=Attr("routing_profile").contains(routing_profile_name)
         )
 
         items = response.get("Items", [])
         items.sort(key=lambda x: (x.get("template_name") or "").lower())
-        items = _json_safe(items)  # <-- make JSON-safe
+        safe_items = _json_safe(items)
 
-        logger.info(f"Found {len(items)} items")
+        logger.info(f"[GET SUCCESS] Found {len(safe_items)} templates for routingProfile={routing_profile_name}")
 
         return respond(200, {
             "name": routing_profile_name,
-            "templates": items
+            "templates": safe_items
         })
 
     except ClientError as e:
@@ -88,7 +83,7 @@ def handle_get_email_template_app(path_params):
         }
         status = status_map.get(code, 502)
 
-        logger.warning(f"Get templates failed [{code}] {msg} (requestId={req_id})")
+        logger.warning(f"[GET FAILED] [{code}] {msg} (requestId={req_id})")
         return respond(status, {
             "error": code,
             "message": msg,
@@ -97,7 +92,7 @@ def handle_get_email_template_app(path_params):
         })
 
     except Exception as e:
-        logger.exception("Unhandled error during get")
+        logger.exception("[UNHANDLED ERROR] During email template retrieval")
         return respond(500, {
             "error": "InternalServerError",
             "message": str(e)

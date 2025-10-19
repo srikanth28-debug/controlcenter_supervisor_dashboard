@@ -1,62 +1,88 @@
-from utils.aws_clients import ddb as DDB, connect as CONNECT, table
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
+from utils.http import respond
 import boto3
 import base64
-import logging
 import json
-import os
+from botocore.exceptions import ClientError
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+logger = get_logger(__name__)
 POLLY = boto3.client("polly")
 
-def handle_post_speech(body):
+# ---------------------------------------------------------------------------
+# Handler
+# ---------------------------------------------------------------------------
+def handle_post_speech(body: dict):
 
-    logger.info("Handling post speech request")
-        
-    text = body.get("text", None)
-    voice_id = body.get("voice", None)
+    logger.info("[REQUEST] Handling post speech synthesis")
+
+    # Extract and validate inputs
+    text = body.get("text")
+    voice_id = body.get("voice")
     output_format = body.get("output_format", "mp3")
-    engine = body.get("engine", None)
-    language_code = body.get("language_code", None)
-    text_type = body.get("text_type", None)
+    engine = body.get("engine", "neural")
+    language_code = body.get("language_code", "en-US")
+    text_type = body.get("text_type", "text")
 
-    '''
-    if not text or not voice_id or not output_format:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({"error": "Missing neccessary data."}),
-            'headers': {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-        }
-    '''
+    # -------------------- Validation --------------------
+    if not text or not voice_id:
+        logger.warning("[VALIDATION] Missing required fields: text or voice_id")
+        return respond(400, {
+            "error": "BadRequest",
+            "message": "Fields 'text' and 'voice' are required."
+        })
 
-    response = POLLY.synthesize_speech(
-        Engine=engine,
-        LanguageCode=language_code,
-        TextType=text_type,
-        Text=text,
-        OutputFormat=output_format,
-        VoiceId=voice_id
-    )
+    try:
+        # -------------------- Polly Synthesis --------------------
+        logger.info(f"[POLLY] Synthesizing with Voice={voice_id}, Engine={engine}, Lang={language_code}")
+        response = POLLY.synthesize_speech(
+            Engine=engine,
+            LanguageCode=language_code,
+            TextType=text_type,
+            Text=text,
+            OutputFormat=output_format,
+            VoiceId=voice_id
+        )
 
-    audio_stream = response['AudioStream'].read()
-    audio_base64 = base64.b64encode(audio_stream).decode('utf-8')
+        audio_stream = response.get("AudioStream")
+        if not audio_stream:
+            logger.error("[ERROR] Polly returned no AudioStream")
+            return respond(502, {
+                "error": "AudioStreamMissing",
+                "message": "No audio data returned by Polly."
+            })
 
-    return {
-            'statusCode': 200,
-            'body': json.dumps({
-                "audio": audio_base64
-            }),
-            'headers': {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-        }
+        # Convert audio to base64 for client use
+        audio_bytes = audio_stream.read()
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+        logger.info(f"[SUCCESS] Synthesized {len(audio_bytes)} bytes of audio")
+
+        return respond(200, {
+            "audio": audio_base64,
+            "voice": voice_id,
+            "format": output_format,
+            "engine": engine,
+            "language_code": language_code
+        })
+
+    # -------------------- AWS Error Handling --------------------
+    except ClientError as e:
+        err = e.response.get("Error", {})
+        code = err.get("Code", "ClientError")
+        msg = err.get("Message", str(e))
+        logger.warning(f"[AWS ERROR] {code}: {msg}")
+        return respond(502, {
+            "error": code,
+            "message": msg
+        })
+
+    # -------------------- General Error Handling --------------------
+    except Exception as e:
+        logger.exception("[UNHANDLED ERROR] Polly speech synthesis failed")
+        return respond(500, {
+            "error": "InternalServerError",
+            "message": str(e)
+        })

@@ -13,7 +13,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # ---- ENV CONFIG ----
-INSTANCE_ID       = os.environ.get("CONNECT_INSTANCE_ID", "33dd2811-cc53-4534-b1d2-8a765c6d919a")
+INSTANCE_ID       = os.environ.get("CONNECT_INSTANCE_ID")
 REGION            = os.environ.get("CONNECT_REGION", "us-west-2")
 QUICK_CONNECT_ID  = os.environ.get("QUICK_CONNECT_ID", "b96ec20b-10fe-4521-9a8b-e329f65e0706")  # change as needed
 LOCAL_TZ          = os.environ.get("LOCAL_TZ", "America/Toronto")  # interpret incoming date/time in this tz
@@ -33,10 +33,7 @@ def _resp(status, payload):
     }
 
 def _field_value(fields, *candidates):
-    """
-    Find the first matching field by .name OR .label (case-insensitive) and return its .value.
-    Example: _field_value(fields, "taskName", "T", "Task Name")
-    """
+    
     name_map  = {str(f.get("name", "")).strip().lower(): f.get("value") for f in fields}
     label_map = {str(f.get("label", "")).strip().lower(): f.get("value") for f in fields}
     for cand in candidates:

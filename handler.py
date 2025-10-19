@@ -1,95 +1,111 @@
 import json
+import logging
+
+# Import get_logger instead of logger
 from utils.logger import get_logger
-from utils.http import respond, cors_headers
 
-logger = get_logger("router")
+# Initialize logger for this module
+logger = get_logger(__name__)
 
-def _import(name, func):
-    try:
-        mod = __import__(f"routes.{name}", fromlist=[func])
-        return getattr(mod, func)
-    except Exception:
-        return None
+# Import your route handlers
+# from routes.get_greetings import handle_get_greetings
+# from routes.post_greetings import handle_post_greetings
+from routes.get_voices import handle_get_voices
+from routes.post_speech import handle_post_speech
+from routes.get_predefined_attributes import handle_get_predefined_attributes
+from routes.delete_predefined_attribute import handle_delete_predefined_attributes
+from routes.post_predefined_attributes import handle_post_predefined_attributes
+from routes.get_email_template import handle_get_email_template_app
+from routes.post_task_template import handle_post_task_template_app
+from routes.post_chaneltype_configs import handle_chaneltype_configs
+from routes.post_chaneltype_prompts import handle_chaneltype_prompts
+from routes.post_user_config import handle_user_configs
+from routes.post_profile_config import handle_profile_configs
+from routes.get_profile_dashboards import handle_get_profile_dashboard
+from routes.post_agent_proficiency_profiles import handle_agent_proficiency_profiles
+from routes.post_agent_proficiency_assignment import handle_agent_proficiency_assignment
 
-# Try to import handlers; any can be None if module missing
-handle_agent_proficiency_assignment = _import("post_agent_proficiency_assignment", "handle_agent_proficiency_assignment")
-handle_agent_proficiency_profiles   = _import("post_agent_proficiency_profiles", "handle_agent_proficiency_profiles")
-handle_chaneltype_configs           = _import("post_chaneltype_configs", "handle_chaneltype_configs")
-handle_chaneltype_prompts           = _import("post_chaneltype_prompts", "handle_chaneltype_prompts")
-handle_get_users                    = _import("get_users", "handle_get_users")
-handle_get_profile_dashboard        = _import("get_profile_dashboards", "handle_get_profile_dashboard")
-handle_get_predefined_attributes    = _import("get_predefined_attributes", "handle_get_predefined_attributes")
-handle_post_predefined_attributes   = _import("post_predefined_attributes", "handle_post_predefined_attributes")
-handle_delete_predefined_attributes = _import("delete_predefined_attribute", "handle_delete_predefined_attributes")
-handle_get_greetings                = _import("get_greetings", "handle_get_greetings")
-handle_post_greetings               = _import("post_greetings", "handle_post_greetings")
-handle_get_voices                   = _import("get_voices", "handle_get_voices")
-handle_post_speech                  = _import("post_speech", "handle_post_speech")
-handle_post_user_config             = _import("post_user_config", "handle_post_user_config")
-handle_post_profile_config          = _import("post_profile_config", "handle_post_profile_config")
-handle_post_task_template_app       = _import("post_task_template", "handle_post_task_template_app")
-handle_post_user_proficiencies      = _import("post_user_proficiencies", "handle_post_user_proficiencies")
-handle_post_user_proficiencies_bulk = _import("post_user_proficiencies_bulk", "handle_post_user_proficiencies_bulk")
-handle_get_list_connect_agents      = _import("get_list_connect_agents", "handle_get_list_connect_agents")
-handle_get_email_template           = _import("get_email_template", "handle_get_email_template")
-
-def _parse_body(event):
-    body = event.get("body")
-    if isinstance(body, str):
-        try:
-            return json.loads(body)
-        except Exception:
-            return {}
-    return body or {}
 
 def lambda_handler(event, context):
-    if event.get("httpMethod") == "OPTIONS":
-        return {"statusCode": 200, "headers": cors_headers(), "body": ""}
+    logger.info(f"Received event: {json.dumps(event)}")
 
-    path = event.get("resource") or event.get("path") or ""
-    method = event.get("httpMethod") or event.get("requestContext", {}).get("http", {}).get("method", "")
-    body = _parse_body(event)
-    logger.info(f"{method} {path}")
+    resource = event.get('resource', '')
+    path = event.get('path', '')
+    http_method = event.get('httpMethod', '')
+    query_params = event.get('queryStringParameters') or {}
+    path_params = event.get('pathParameters') or {}
+    body = event.get('body', '{}')
 
-    if path.endswith("/agent-proficiency-assignment") and method == "POST" and handle_agent_proficiency_assignment:
-        return handle_agent_proficiency_assignment(body)
-    if path.endswith("/agent-proficiency-profiles") and method == "POST" and handle_agent_proficiency_profiles:
-        return handle_agent_proficiency_profiles(body)
-    if path.endswith("/chaneltypeconfigs") and method == "POST" and handle_chaneltype_configs:
-        return handle_chaneltype_configs(body)
-    if path.endswith("/chaneltypeprompts") and method == "POST" and handle_chaneltype_prompts:
-        return handle_chaneltype_prompts(body)
-    if path.endswith("/users") and method == "POST" and handle_get_users:
-        return handle_get_users(body)
-    if path.endswith("/profile-dashboards") and method == "POST" and handle_get_profile_dashboard:
-        return handle_get_profile_dashboard(body)
-    if path.endswith("/predefined-attributes") and method == "GET" and handle_get_predefined_attributes:
-        return handle_get_predefined_attributes(body)
-    if path.endswith("/predefined-attributes") and method == "POST" and handle_post_predefined_attributes:
-        return handle_post_predefined_attributes(body)
-    if path.endswith("/predefined-attributes") and method == "DELETE" and handle_delete_predefined_attributes:
-        return handle_delete_predefined_attributes(body)
-    if path.endswith("/greetings") and method == "GET" and handle_get_greetings:
-        return handle_get_greetings(body)
-    if path.endswith("/greetings") and method == "POST" and handle_post_greetings:
-        return handle_post_greetings(body)
-    if path.endswith("/voices") and method == "GET" and handle_get_voices:
-        return handle_get_voices(body)
-    if path.endswith("/speech") and method == "POST" and handle_post_speech:
-        return handle_post_speech(body)
-    if path.endswith("/user-config") and method == "POST" and handle_post_user_config:
-        return handle_post_user_config(body)
-    if path.endswith("/profile-config") and method == "POST" and handle_post_profile_config:
-        return handle_post_profile_config(body)
-    if path.endswith("/task-template") and method == "POST" and handle_post_task_template_app:
-        return handle_post_task_template_app(body)
-    if path.endswith("/user-proficiencies") and method == "POST" and handle_post_user_proficiencies:
-        return handle_post_user_proficiencies(body)
-    if path.endswith("/user-proficiencies-bulk") and method == "POST" and handle_post_user_proficiencies_bulk:
-        return handle_post_user_proficiencies_bulk(body)
-    if path.endswith("/list-connect-agents") and method == "POST" and handle_get_list_connect_agents:
-        return handle_get_list_connect_agents(body)
-    if path.endswith("/email-template") and method == "POST" and handle_get_email_template:
-        return handle_get_email_template(body)
+    logger.info(f"Path: {path}, Resource: {resource}, Method: {http_method}")
 
-    return respond(404, {"error": f"No route for {method} {path}"})
+    # --- CORS Preflight ---
+    if http_method == "OPTIONS":
+        return {
+            "statusCode": 204,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+                "Access-Control-Max-Age": "600",
+            },
+            "body": json.dumps({"message": "ok"}),
+        }
+
+    # --- Routing Logic ---
+    try:
+        if resource == '/agent-greeting' and http_method == 'GET':
+            return handle_get_greetings(
+                query_params.get('username', ''), query_params.get('language', '')
+            )
+        elif resource == '/agent-greeting' and http_method == 'POST':
+            return handle_post_greetings(json.loads(body))
+        elif resource == '/polly/languages' and http_method == 'GET':
+            return handle_get_voices()
+        elif resource == '/polly/speech' and http_method == 'POST':
+            return handle_post_speech(json.loads(body))
+        elif resource == '/business-configuration/users' and http_method == 'GET':
+            return handle_get_users()
+        elif resource == '/admin-configuration/predefined-attributes' and http_method == 'GET':
+            return handle_get_predefined_attributes()
+        elif resource == '/admin-configuration/predefined-attributes/{attributeName+}' and http_method == 'DELETE':
+            return handle_delete_predefined_attributes(path_params)
+        elif resource == '/admin-configuration/predefined-attributes' and http_method == 'POST':
+            return handle_post_predefined_attributes(json.loads(body))
+        elif resource == '/business-configuration/user-proficiencies' and http_method == 'POST':
+            return handle_post_user_proficiencies(json.loads(body))
+        elif resource == '/business-configuration/user-proficiencies-bulk' and http_method == 'POST':
+            return handle_post_user_proficiencies_bulk(json.loads(body))
+        elif resource == '/email-template-app/{routingProfile+}' and http_method == 'GET':
+            return handle_get_email_template_app(path_params)
+        elif resource == '/task-template-app' and http_method == 'POST':
+            return handle_post_task_template_app(json.loads(body))
+        elif resource == '/chaneltypeconfigs' and http_method == 'POST':
+            return handle_chaneltype_configs(json.loads(body))
+        elif resource == '/chaneltypeprompts' and http_method == 'POST':
+            return handle_chaneltype_prompts(json.loads(body))
+        elif resource == '/userconfig' and http_method == 'POST':
+            return handle_user_configs(json.loads(body))
+        elif resource == '/profileconfig' and http_method == 'POST':
+            return handle_profile_configs(json.loads(body))
+        elif resource == '/dashboards' and http_method == 'GET':
+            return handle_get_profile_dashboard(query_params.get('email', ''))
+        elif resource == '/agent-proficiency-assignment' and http_method == 'POST':
+            return handle_agent_proficiency_assignment(json.loads(body))
+        elif resource == '/agent-proficiency-profiles' and http_method == 'POST':
+            return handle_agent_proficiency_profiles(json.loads(body))
+        else:
+            logger.warning(f"No matching route for resource: {resource}, method: {http_method}")
+            return {
+                "statusCode": 404,
+                "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"message": f"No route found for {resource} [{http_method}]"}),
+            }
+
+    except Exception as e:
+        logger.exception(f"Error handling {resource}: {str(e)}")
+        return {
+            "statusCode": 500,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"error": str(e)}),
+        }
